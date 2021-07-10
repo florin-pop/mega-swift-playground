@@ -86,18 +86,65 @@ struct MegaLink {
 }
 
 extension MegaLink {
-    var cipher: Cipher? {
+    var ctrCipher: Cipher? {
         guard let base64Key = self.publicFileKey?.base64Decoded() else {
             return nil
         }
-
+        
         let intKey = base64Key.toUInt32Array()
         let keyNOnce = [intKey[0] ^ intKey[4], intKey[1] ^ intKey[5], intKey[2] ^ intKey[6], intKey[3] ^ intKey[7], intKey[4], intKey[5]]
         let key = Data(uInt32Array: [keyNOnce[0], keyNOnce[1], keyNOnce[2], keyNOnce[3]])
         let iiv = [keyNOnce[4], keyNOnce[5], 0, 0]
         let iv = Data(uInt32Array: iiv)
-
+        
         return try? AES(key: Array(key), blockMode: CTR(iv: Array(iv)), padding: .noPadding)
+    }
+    
+    var cbcCipher: Cipher? {
+        guard let base64Key = self.publicFileKey?.base64Decoded() else {
+            return nil
+        }
+        
+        let intKey = base64Key.toUInt32Array()
+        let key = Data(uInt32Array: [intKey[0] ^ intKey[4], intKey[1] ^ intKey[5], intKey[2] ^ intKey[6], intKey[3] ^ intKey[7]])
+        let iiv: [UInt32] = [0, 0, 0, 0]
+        let iv = Data(uInt32Array: iiv)
+
+        return try? AES(key: Array(key), blockMode: CBC(iv: Array(iv)), padding: .zeroPadding)
+    }
+}
+
+struct MegaFileInfo: Decodable {
+    struct Attributes: Decodable {
+        let name: String
+        
+        enum CodingKeys: String, CodingKey {
+            case name = "n"
+        }
+    }
+    
+    let size: Int64
+    let encryptedAttributes: String
+    let downloadLink: String
+    
+    enum CodingKeys: String, CodingKey {
+        case size = "s"
+        case encryptedAttributes = "at"
+        case downloadLink = "g"
+    }
+}
+
+extension MegaFileInfo {
+    func decryptAttributes(using cipher: Cipher) -> Attributes? {
+        guard let attributeData = try? encryptedAttributes.base64Decoded()?.decrypt(cipher: cipher),
+           let attributeString = String(data: attributeData, encoding: .utf8),
+           attributeString.starts(with: "MEGA{"),
+           let attributeJSONData = attributeString[attributeString.index( attributeString.startIndex, offsetBy: 4)...].data(using: .utf8),
+           let attributes = try? JSONDecoder().decode(Attributes.self, from: attributeJSONData)
+        else {
+            return nil
+        }
+        return attributes
     }
 }
 
@@ -138,9 +185,12 @@ func getDownloadLink(from link: MegaLink, completion: @escaping (Result<String, 
     URLSession.shared.dataTask(with: request) { data, response, error in
         DispatchQueue.main.async {
             if let data = data {
-                if let jsonResponse = try? JSONSerialization.jsonObject(with: data, options: []) as? JSONArray,
-                   let downloadLink = jsonResponse.first?["g"] as? String {
-                    completion(.success(downloadLink))
+                if let response = try? JSONDecoder().decode([MegaFileInfo].self, from: data),
+                   let fileInfo = response.first,
+                   let cipher = megaLink.cbcCipher,
+                   let fileName = fileInfo.decryptAttributes(using: cipher)?.name {
+                    print(fileName)
+                    completion(.success(fileInfo.downloadLink))
                 } else {
                     completion(.failure(.badResponse))
                 }
@@ -180,13 +230,15 @@ func download(from link: MegaLink, completion: @escaping (Result<Data, DownloadE
     }
 }
 
+//let megaLink = MegaLink(url: "https://mega.nz/#!EBZCXCjZ!tCUNt4nempTV9PQi4Rq6RFuDIU8t_87gXdFxJmmqFKo")
+
 let megaLink = MegaLink(url: "https://mega.nz/#!nyIECKrQ!c3tzkRH1OtQ-cxvOc26B9TkwXy9MNdRpciaOjq-0B6o")
 
 download(from: megaLink) { result in
     switch result {
     case .success(let encryptedData):
-        if let cipher = megaLink.cipher,
-            let data = try? encryptedData.decrypt(cipher: cipher) {
+        if let cipher = megaLink.ctrCipher,
+           let data = try? encryptedData.decrypt(cipher: cipher) {
             CIImage(data: data)
         } else {
             print("Decryption failed")
