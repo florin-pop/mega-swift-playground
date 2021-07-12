@@ -8,7 +8,7 @@ typealias JSONObject = [String: Any]
 typealias JSONArray = [JSONObject]
 
 enum DownloadError: Error {
-    case badURL, badMegaLink, requestFailed, badResponse, unknown
+    case badURL, requestFailed, badResponse, unknown
 }
 
 extension String {
@@ -56,38 +56,44 @@ extension Data {
     }
 }
 
-struct RegEx {
-    let string: String
-    let pattern: String
-    
-    func getMatch(index: Int = 0, group: Int = 0) -> String? {
-        let range = NSRange(string.startIndex..<string.endIndex, in: string)
-        let regex = try? NSRegularExpression(pattern: pattern, options: [])
-        
-        if let matches = regex?.matches(in: string, range: range),
-           matches.count > index, matches[index].numberOfRanges > group {
-            return (string as NSString)
-                .substring(with: matches[index].range(at: group))
-        }
-        return nil
-    }
-}
-
 struct MegaLink {
+    
+    // http://megous.com/git/megatools/tree/tools/dl.c#n363
+    private static let regexes: [String] = [
+        "^https?://mega(?:\\.co)?\\.nz/#!([a-z0-9_-]{8})!([a-z0-9_-]{43})$",
+        "^https?://mega\\.nz/file/([a-z0-9_-]{8})#([a-z0-9_-]{43})$"
+    ]
+    
     let url: String
+    let id: String
+    let key: String
     
-    var publicFileID: String? {
-        return RegEx(string: url, pattern: "#(!|%21)([a-zA-Z0-9]+)(!|%21)").getMatch()
-    }
-    
-    var publicFileKey: String? {
-        return RegEx(string: url, pattern: "#(!|%21)[a-zA-Z0-9]+(!|%21)([a-zA-Z0-9_,\\-%]+)").getMatch(group: 3)?.replacingOccurrences(of: "%20", with: "")
+    init?(url: String) {
+        self.url = url
+        let matchResult: NSTextCheckingResult? = {
+            for pattern in Self.regexes {
+                let range = NSRange(url.startIndex..<url.endIndex, in: url)
+                let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+                
+                if let match = regex?.matches(in: url, range: range).first,
+                   match.numberOfRanges >= 2 {
+                    return match
+                }
+            }
+            return nil
+        }()
+        
+        guard let match = matchResult else { return nil }
+        
+        let string = url as NSString
+        self.id = string.substring(with: match.range(at: 1))
+        self.key = string.substring(with: match.range(at: 2)).replacingOccurrences(of: "%20", with: "")
     }
 }
 
 extension MegaLink {
     var ctrCipher: Cipher? {
-        guard let base64Key = self.publicFileKey?.base64Decoded() else {
+        guard let base64Key = self.key.base64Decoded() else {
             return nil
         }
         
@@ -101,7 +107,7 @@ extension MegaLink {
     }
     
     var cbcCipher: Cipher? {
-        guard let base64Key = self.publicFileKey?.base64Decoded() else {
+        guard let base64Key = self.key.base64Decoded() else {
             return nil
         }
         
@@ -109,7 +115,7 @@ extension MegaLink {
         let key = Data(uInt32Array: [intKey[0] ^ intKey[4], intKey[1] ^ intKey[5], intKey[2] ^ intKey[6], intKey[3] ^ intKey[7]])
         let iiv: [UInt32] = [0, 0, 0, 0]
         let iv = Data(uInt32Array: iiv)
-
+        
         return try? AES(key: Array(key), blockMode: CBC(iv: Array(iv)), padding: .zeroPadding)
     }
 }
@@ -137,10 +143,10 @@ struct MegaFileInfo: Decodable {
 extension MegaFileInfo {
     func decryptAttributes(using cipher: Cipher) -> Attributes? {
         guard let attributeData = try? encryptedAttributes.base64Decoded()?.decrypt(cipher: cipher),
-           let attributeString = String(data: attributeData, encoding: .utf8),
-           attributeString.starts(with: "MEGA{"),
-           let attributeJSONData = attributeString[attributeString.index( attributeString.startIndex, offsetBy: 4)...].data(using: .utf8),
-           let attributes = try? JSONDecoder().decode(Attributes.self, from: attributeJSONData)
+              let attributeString = String(data: attributeData, encoding: .utf8),
+              attributeString.starts(with: "MEGA{"),
+              let attributeJSONData = attributeString[attributeString.index( attributeString.startIndex, offsetBy: 4)...].data(using: .utf8),
+              let attributes = try? JSONDecoder().decode(Attributes.self, from: attributeJSONData)
         else {
             return nil
         }
@@ -160,16 +166,11 @@ func getDownloadLink(from link: MegaLink, completion: @escaping (Result<String, 
         return
     }
     
-    guard let publicFileID = megaLink.publicFileID else {
-        completion(.failure(.badMegaLink))
-        return
-    }
-    
     let requestPayload = [[
         "a": "g", // action
         "g": "1",
         "ssl": "1",
-        "p": publicFileID
+        "p": megaLink.id
     ]]
     
     var request = URLRequest(url: url)
@@ -230,9 +231,9 @@ func download(from link: MegaLink, completion: @escaping (Result<Data, DownloadE
     }
 }
 
-//let megaLink = MegaLink(url: "https://mega.nz/#!EBZCXCjZ!tCUNt4nempTV9PQi4Rq6RFuDIU8t_87gXdFxJmmqFKo")
-
-let megaLink = MegaLink(url: "https://mega.nz/#!nyIECKrQ!c3tzkRH1OtQ-cxvOc26B9TkwXy9MNdRpciaOjq-0B6o")
+//let megaLink = MegaLink(url: "https://mega.nz/#!EBZCXCjZ!tCUNt4nempTV9PQi4Rq6RFuDIU8t_87gXdFxJmmqFKo")!
+//let megaLink = MegaLink(url: "https://mega.nz/#!nyIECKrQ!c3tzkRH1OtQ-cxvOc26B9TkwXy9MNdRpciaOjq-0B6o")!
+let megaLink = MegaLink(url: "https://mega.nz/file/nyIECKrQ#c3tzkRH1OtQ-cxvOc26B9TkwXy9MNdRpciaOjq-0B6o")!
 
 download(from: megaLink) { result in
     switch result {

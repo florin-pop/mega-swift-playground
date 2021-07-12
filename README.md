@@ -6,7 +6,9 @@ While working on a download manager I wanted to add the ability to download file
 
 ## Inspiration
 
-The playground uses the regular expressions and decryption algorithm from the *JDownloader* Mega plugin source code which is officially hosted at [svn://svn.jdownloader.org/jdownloader].
+The playground uses the decryption algorithm from the *JDownloader* Mega plugin source code which is officially hosted at [svn://svn.jdownloader.org/jdownloader](svn://svn.jdownloader.org/jdownloader).
+
+The regular expressions for detecting the file ID and Key from the URL are from the *megatools* project which is officially hosted at [http://megous.com/git/megatools](http://megous.com/git/megatools).
 
 
 ## Try it out
