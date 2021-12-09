@@ -231,8 +231,6 @@ func download(from link: MegaLink, completion: @escaping (Result<Data, DownloadE
     }
 }
 
-//let megaLink = MegaLink(url: "https://mega.nz/#!EBZCXCjZ!tCUNt4nempTV9PQi4Rq6RFuDIU8t_87gXdFxJmmqFKo")!
-//let megaLink = MegaLink(url: "https://mega.nz/#!nyIECKrQ!c3tzkRH1OtQ-cxvOc26B9TkwXy9MNdRpciaOjq-0B6o")!
 let megaLink = MegaLink(url: "https://mega.nz/file/nyIECKrQ#c3tzkRH1OtQ-cxvOc26B9TkwXy9MNdRpciaOjq-0B6o")!
 
 download(from: megaLink) { result in
